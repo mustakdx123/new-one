@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🌾 Smart Grain Quality Dashboard</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ml5/0.12.2/ml5.min.js"></script>
+  <style>
+    body { font-family: Arial; text-align: center; background: #f5f6fa; margin: 0; }
+    h2 { color: #2f3542; }
+    #camera canvas { border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.2); }
+    .card { background: white; width: 340px; margin: 20px auto; padding: 15px;
+            border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+    .good { color: green; font-weight: bold; }
+    .average { color: orange; font-weight: bold; }
+    .bad { color: red; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h2>🌾 Grain Quality & Moisture Monitor</h2>
+
+  <div class="card">
+    <h3>📷 AI Grain Analyzer</h3>
+    <div id="camera"></div>
+    <p id="result">Loading model...</p>
+  </div>
+
+  <div class="card">
+    <h3>💧 Moisture Data (from ESP32)</h3>
+    <p id="moisture">Loading data...</p>
+  </div>
+
+<script>
+  // ------------------- AI MODEL -------------------
+  let classifier, video, flippedVideo;
+  let label = "", lastLabel = "";
+
+  const modelURL = "https://teachablemachine.withgoogle.com/models/UdPBJ9EtfL/";
+  const imageModelURL = modelURL + "model.json";
+  const metadataURL = modelURL + "metadata.json";
+
+  function preload() {
+    classifier = ml5.imageClassifier(imageModelURL, metadataURL, () => {
+      document.getElementById("result").innerText = "Model Loaded ✅";
+    });
+  }
+
+  function setup() {
+    const canvas = createCanvas(320, 260);
+    canvas.parent("camera");
+
+    video = createCapture(VIDEO);
+    video.size(320, 240);
+    video.hide();
+
+    // Wait for camera to be ready before classification
+    setTimeout(() => classifyVideo(), 2000);
+
+    setInterval(fetchThingSpeakData, 15000);
+    fetchThingSpeakData();
+  }
+
+  function draw() {
+    background(255);
+    if (video) image(video, 0, 0);
+    fill(0);
+    textSize(16);
+    textAlign(CENTER);
+    text(label, width / 2, height - 8);
+  }
+
+  function classifyVideo() {
+    if (video) {
+      classifier.classify(video, gotResult);
+    }
+  }
+
+  function gotResult(error, results) {
+    if (error) {
+      console.error(error);
+      return;
+    }
+    label = results[0].label;
+    document.getElementById("result").innerHTML = `Grain Type: <b>${label}</b>`;
+
+    if (label !== lastLabel) {
+      lastLabel = label;
+      sendGrainToThingSpeak(label);
+    }
+    classifyVideo();
+  }
+
+  // ------------------- THINGSPEAK -------------------
+  const channelID = "3141253";
+  const readAPIKey = "R2C0VCC89AO4GGZY";
+  const writeAPIKey = "K5XU7MZX3D1J5BDA";
+
+  async function fetchThingSpeakData() {
+    try {
+      const url = `https://api.thingspeak.com/channels/${channelID}/feeds.json?api_key=${readAPIKey}&results=1`;
+      const response = await fetch(url);
+      const data = await response.json();
+      const feed = data.feeds[0];
+
+      const moisture = feed.field1;
+      const status = feed.field2;
+
+      let colorClass = "";
+      if (status.toLowerCase().includes("good")) colorClass = "good";
+      else if (status.toLowerCase().includes("average")) colorClass = "average";
+      else colorClass = "bad";
+
+      document.getElementById("moisture").innerHTML = `
+        Moisture: <b>${moisture}%</b><br>
+        Status: <b class="${colorClass}">${status}</b>
+      `;
+    } catch (err) {
+      console.error(err);
+      document.getElementById("moisture").innerText = "Error loading data.";
+    }
+  }
+
+  async function sendGrainToThingSpeak(grainQuality) {
+    try {
+      const updateURL = `https://api.thingspeak.com/update?api_key=${writeAPIKey}&field3=${encodeURIComponent(grainQuality)}`;
+      const response = await fetch(updateURL);
+      if (response.ok) console.log(`✅ Uploaded: ${grainQuality}`);
+      else console.warn("ThingSpeak update failed.");
+    } catch (err) {
+      console.error("Error sending to ThingSpeak:", err);
+    }
+  }
+</script>
+</body>
+</html>
